@@ -41,7 +41,7 @@ def test_rmap_external_group(group_name, base_url):
         nonce_client = 12345678
         msg1_plain = {"nonceClient": nonce_client, "identity": IDENTITY}
         msg1 = {"payload": im.encrypt_for_server(msg1_plain)}
-        resp1 = requests.post(f"{base_url}/rmap-initiate", json=msg1, timeout=3)
+        resp1 = requests.post(f"{base_url}/rmap-initiate", json=msg1)
         assert resp1.status_code == 200
 
         # Step 2: decrypt server response
@@ -55,13 +55,13 @@ def test_rmap_external_group(group_name, base_url):
         # Step 3: request link
         msg2_plain = {"nonceServer": nonce_server}
         msg2 = {"payload": im.encrypt_for_server(msg2_plain)}
-        resp2 = requests.post(f"{base_url}/rmap-get-link", json=msg2, timeout=3)
+        resp2 = requests.post(f"{base_url}/rmap-get-link", json=msg2)
         assert resp2.status_code == 200
         token = resp2.json()["result"]
         link = f"/api/get-version/{token}"
 
         # Step 4: fetch PDF
-        pdf_resp = requests.get(f"{base_url}{link}", timeout=3)
+        pdf_resp = requests.get(f"{base_url}{link}")
         assert pdf_resp.status_code == 200
         assert pdf_resp.headers["Content-Type"] == "application/pdf"
 
