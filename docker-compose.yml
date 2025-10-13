@@ -18,7 +18,7 @@ services:
     env_file:
       - .env
     environment:
-      - FLASK_ENV=development # debug mode
+    #  - FLASK_ENV=development # debug mode
       - PYTHONUNBUFFERED=1
       - DB_HOST=db
       - DB_PORT=3306
