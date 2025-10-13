@@ -43,16 +43,16 @@ def create_app():
     logging.basicConfig(level=logging.INFO)
     app.logger.setLevel(logging.INFO)
 
-    limiter = Limiter(
-        get_remote_address,
-        app=app,
-        default_limits=["150 per minute"]
-    )
-    # Custom handler for rate limit exceeded
-    @app.errorhandler(RateLimitExceeded)
-    def handle_rate_limit(e):
-        app.logger.warning(f"Rate limit exceeded: {e.description}")
-        return jsonify({"error": "Rate limit exceeded"}), 429
+    # limiter = Limiter(
+    #     get_remote_address,
+    #     app=app,
+    #     default_limits=["150 per minute"]
+    # )
+    # # Custom handler for rate limit exceeded
+    # @app.errorhandler(RateLimitExceeded)
+    # def handle_rate_limit(e):
+    #     app.logger.warning(f"Rate limit exceeded: {e.description}")
+    #     return jsonify({"error": "Rate limit exceeded"}), 429
 
 
     # Register global error handler at the end of app setup
@@ -190,7 +190,13 @@ def create_app():
     # No risk of directory traversal here
     @app.post("/api/login")
     def login():
-        payload = request.get_json(silent=True) or {}
+        try:
+            payload = request.get_json(silent=True) or {}
+            if not isinstance(payload, dict):
+                # Payload must be a JSON object
+                return jsonify({"error": "Invalid JSON payload"}), 400
+        except Exception:
+            return jsonify({"error": "Invalid JSON payload"}), 400
         email = (payload.get("email") or "").strip()
         password = payload.get("password") or ""
         if not email or not password:
@@ -334,6 +340,21 @@ def create_app():
 
     # GET /api/list-versions
     # No risk of directory traversal here
+    # Fuzzing fix, separate route to catch bad IDs that would crash the int:document_id route
+    @app.get("/api/list-versions/<path:bad_id>")
+    def reject_bad_document_id(bad_id):
+        try:
+            doc_id = int(bad_id)
+            if doc_id <= 0:
+                print(f"[DEBUG] Fallback route caught invalid document_id={doc_id}")
+                return jsonify({"error": "invalid document id"}), 400
+        except ValueError:
+            print(f"[DEBUG] Fallback route caught non-integer document_id={bad_id}")
+            return jsonify({"error": "invalid document id"}), 400
+
+        # If it's a valid positive integer, let Flask route it normally
+        return jsonify({"error": "document not found"}), 404
+
     @app.get("/api/list-versions")
     @app.get("/api/list-versions/<int:document_id>")
     @require_auth
@@ -397,6 +418,23 @@ def create_app():
     @app.get("/api/list-all-versions")
     @require_auth
     def list_all_versions():
+        # --- Header validation: reject malformed or unsafe headers ---
+        try:
+            for key, value in request.headers.items():
+                if not isinstance(key, str) or not key.isascii():
+                    print(f"[SECURITY] Non-ASCII header name: {repr(key)}")
+                    return jsonify({"error": "invalid header name"}), 400
+                if not isinstance(value, str) or not value.isascii():
+                    print(f"[SECURITY] Non-ASCII header value: {repr(value)}")
+                    return jsonify({"error": "invalid header value"}), 400
+                if any(c in key for c in ' \r\n:;'):
+                    print(f"[SECURITY] Reserved character in header name: {repr(key)}")
+                    return jsonify({"error": "invalid header name"}), 400
+        except Exception as e:
+            print(f"[SECURITY] Exception during header validation: {e}")
+            return jsonify({"error": "header validation error"}), 503
+
+        # --- Main query logic ---
         try:
             with get_engine().connect() as conn:
                 rows = conn.execute(
@@ -419,10 +457,28 @@ def create_app():
             "intended_for": r.intended_for,
             "method": r.method,
         } for r in rows]
+
         return jsonify({"versions": versions}), 200
     
     # GET /api/get-document or /api/get-document/<id>  → returns the PDF (inline)
     # No risk of directory traversal here
+
+    # Fuzzing fix: catch malformed or missing IDs before Flask int converter
+    @app.get("/api/get-document/")
+    def reject_empty_document_id():
+        return jsonify({"error": "missing or invalid document id"}), 400
+    @app.get("/api/get-document/<path:bad_id>")
+    def reject_bad_get_document_id(bad_id):
+        try:
+            doc_id = int(bad_id)
+            if doc_id <= 0:
+                print(f"[DEBUG] Fallback route caught invalid document_id={doc_id}")
+                return jsonify({"error": "invalid document id"}), 400
+        except ValueError:
+            print(f"[DEBUG] Fallback route caught non-integer document_id={bad_id}")
+            return jsonify({"error": "invalid document id"}), 400
+        # If it’s valid and positive, let the normal int route handle it
+        return jsonify({"error": "document not found"}), 404
     @app.get("/api/get-document")
     @app.get("/api/get-document/<int:document_id>")
     @require_auth
