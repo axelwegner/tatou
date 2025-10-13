@@ -11,13 +11,14 @@ services:
       - user-files:/app/storage
       - ./storage:/storage:ro
       - ./storage/rmap_pdfs:/app/storage/rmap_pdfs
+      - ./server/fuzz-config.yaml:/app/fuzz-config.yaml:ro
 
       - ./server/pki:/app/pki
       - ${HOST_SERVER_KEYS}:${SERVER_KEYS_DIR}
     env_file:
       - .env
     environment:
-      #- FLASK_ENV=development # debug mode
+      - FLASK_ENV=development # debug mode
       - PYTHONUNBUFFERED=1
       - DB_HOST=db
       - DB_PORT=3306
