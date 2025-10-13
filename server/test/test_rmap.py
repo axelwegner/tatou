@@ -27,14 +27,14 @@ def test_full_rmap_handshake():
     msg1_plain = {"nonceClient": nonce_client, "identity": IDENTITY}
     msg1 = {"payload": im.encrypt_for_server(msg1_plain)}
 
-    resp1 = client.post("/rmap-initiate", json=msg1)
+    resp1 = client.post("/api/rmap-initiate", json=msg1)
     print(">>> Response 1 status:", resp1.status_code)
     print(">>> Response 1 body:", resp1.get_data(as_text=True))
     assert resp1.status_code == 200
     resp1_json = resp1.get_json()
 
-    armored = base64.b64decode(resp1_json["payload"]).decode("utf-8")
-    pgp_msg = PGPMessage.from_blob(armored)
+    pgp_bytes = base64.b64decode(resp1_json["payload"])
+    pgp_msg = PGPMessage.from_blob(pgp_bytes)
     client_priv, _ = PGPKey.from_file(str(CLIENT_PRIV_KEY))
     with client_priv.unlock(CLIENT_PASSPHRASE):
         decrypted = client_priv.decrypt(pgp_msg)
@@ -45,7 +45,7 @@ def test_full_rmap_handshake():
     msg2_plain = {"nonceServer": nonce_server}
     msg2 = {"payload": im.encrypt_for_server(msg2_plain)}
 
-    resp2 = client.post("/rmap-get-link", json=msg2)
+    resp2 = client.post("/api/rmap-get-link", json=msg2)
     print(">>> Response 2 status:", resp2.status_code)
     print(">>> Response 2 body:", resp2.get_data(as_text=True))
     assert resp2.status_code == 200, "Expected 200 OK from /rmap-get-link"
