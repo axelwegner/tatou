@@ -1047,7 +1047,7 @@ def create_app():
         }), 201
 
     # POST /rmap-initiate
-    @app.post("/rmap-initiate")
+    @app.route("/api/rmap-initiate", methods=["POST"])
     def rmap_initiate():
         rmap = app.config["RMAP"]
         incoming = request.get_json(silent=True) or {}
@@ -1067,8 +1067,7 @@ def create_app():
 
     # POST /rmap-get-link
     # Fixed to prevent directory traversal attacks and ensure Group_19 document exists
-    @app.post("/rmap-get-link")
-
+    @app.route("/api/rmap-get-link", methods=["POST"])
     def rmap_get_link():
         rmap = app.config["RMAP"]
         storage_root = Path(app.config["STORAGE_DIR"]).resolve()
