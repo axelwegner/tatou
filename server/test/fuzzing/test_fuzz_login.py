@@ -1,11 +1,9 @@
 from hypothesis import given, settings
 import pytest
 import requests
-from ..fuzz_helpers import API_URL, HEADERS, TIMEOUT, HYP_SETTINGS, build_strategy_from_spec, _CONFIG
+from ..fuzz_helpers import API_URL, HEADERS, TIMEOUT, HYP_SETTINGS, LOGIN_STRATEGY
 
 # Build strategy from YAML
-LOGIN_STRATEGY = build_strategy_from_spec(_CONFIG['strategies'].get('login_strategy', {}))
-
 @given(payload=LOGIN_STRATEGY)
 @settings(**HYP_SETTINGS)
 def test_fuzz_login(payload):

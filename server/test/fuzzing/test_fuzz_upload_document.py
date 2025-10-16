@@ -48,14 +48,21 @@ def test_fuzz_upload_document(payload, request):
     files = {"file": (filename_with_ext, file_obj, mime)}
     data = {"name": form_name}
 
-    auth_headers = request.getfixturevalue("auth_headers")
+    extra_headers = payload["extra_headers"]
+    auth_headers = request.getfixturevalue("auth_headers") if payload["use_auth"] else {}
+    headers = {**auth_headers, **extra_headers}
+
 
     try:
-        r = requests.post(f"{API_URL}/upload-document", files=files, data=data, headers=auth_headers, timeout=TIMEOUT)
+        r = requests.post(f"{API_URL}/upload-document", files=files, data=data, headers=headers, timeout=TIMEOUT)
     except requests.exceptions.RequestException as e:
         pytest.skip(f"Transport error during request: {e}")
         return
 
-    assert r.status_code in (201, 400, 415, 503), (
+    expected_statuses = (201, 400, 415, 503)
+    if not payload["use_auth"]:
+        expected_statuses += (401,)
+    assert r.status_code in expected_statuses, (
         f"Unexpected status {r.status_code} for filename={filename_with_ext}, mime={mime}, name={form_name}"
     )
+

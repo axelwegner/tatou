@@ -19,6 +19,9 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
+from urllib.parse import unquote # Used in get version
+from validators import is_invalid_link, raw_uri_has_traversal
+import re
 
 from rmap.identity_manager import IdentityManager
 from rmap.rmap import RMAP
@@ -55,12 +58,20 @@ def create_app():
     #     return jsonify({"error": "Rate limit exceeded"}), 429
 
 
-    # Register global error handler at the end of app setup
+    # Global error handlers
+    @app.errorhandler(405)
+    def method_not_allowed(e):
+        return jsonify({"error": "Method not allowed"}), 405
+
+    @app.errorhandler(Exception)
     def handle_exception(e):
-        print("[ERROR] Unhandled Exception:")
-        traceback.print_exc()
+        # Let HTTPExceptions (like 404, 401) pass through with their own codes
+        from werkzeug.exceptions import HTTPException
+        if isinstance(e, HTTPException):
+            return e
         return jsonify({"error": str(e), "type": type(e).__name__}), 500
-    app.errorhandler(Exception)(handle_exception)
+
+
 
     # app.debug = True
     # app.config["ENV"] = "development"
@@ -131,7 +142,27 @@ def create_app():
         return h.hexdigest()
 
     # --- Routes ---
-    # Preventing directory traversal attacks
+    # Preventing directory traversal and malformed paths
+    @app.before_request
+    def reject_traversal_or_malformed():
+        raw_uri = request.environ.get("RAW_URI") or request.environ.get("REQUEST_URI") or ""
+        path = request.path or ""
+
+        # Conditions that should trigger rejection:
+        if (
+            raw_uri_has_traversal(raw_uri)  # encoded traversal attempts
+            or ".." in path                 # decoded traversal
+            or "//" in path                 # double slashes
+            or ">" in raw_uri or "<" in raw_uri  # malformed characters
+            or ">" in path or "<" in path
+            or " " in raw_uri or " " in path     # spaces in URI
+        ):
+            app.logger.warning("Rejected invalid URI: raw=%r path=%r", raw_uri, path)
+            return jsonify({"error": "invalid version link"}), 400
+
+
+
+
     @app.route("/<path:filename>")
     def static_files(filename):
         
@@ -342,7 +373,7 @@ def create_app():
     # No risk of directory traversal here
     # Fuzzing fix, separate route to catch bad IDs that would crash the int:document_id route
     @app.get("/api/list-versions/<path:bad_id>")
-    def reject_bad_document_id(bad_id):
+    def reject_bad_list_versions_id(bad_id):
         try:
             doc_id = int(bad_id)
             if doc_id <= 0:
@@ -462,35 +493,37 @@ def create_app():
     
     # GET /api/get-document or /api/get-document/<id>  → returns the PDF (inline)
     # No risk of directory traversal here
-
-    # Fuzzing fix: catch malformed or missing IDs before Flask int converter
-    @app.get("/api/get-document/")
-    def reject_empty_document_id():
-        return jsonify({"error": "missing or invalid document id"}), 400
+    # This is the fuzzing fix route for bad id
     @app.get("/api/get-document/<path:bad_id>")
     def reject_bad_get_document_id(bad_id):
         try:
             doc_id = int(bad_id)
             if doc_id <= 0:
-                print(f"[DEBUG] Fallback route caught invalid document_id={doc_id}")
                 return jsonify({"error": "invalid document id"}), 400
         except ValueError:
-            print(f"[DEBUG] Fallback route caught non-integer document_id={bad_id}")
             return jsonify({"error": "invalid document id"}), 400
-        # If it’s valid and positive, let the normal int route handle it
+        # If it is a valid positive integer, let Flask route it normally
         return jsonify({"error": "document not found"}), 404
+    
+    #Another new route for bad ids!
+    @app.get("/api/get-document/")
+    def reject_empty_get_document():
+        return jsonify({"error": "invalid document id"}), 400
+
     @app.get("/api/get-document")
     @app.get("/api/get-document/<int:document_id>")
     @require_auth
     def get_document(document_id: int | None = None):
-    
-        # Support both path param and ?id=/ ?documentid=
+        # Fuzzing fix: empty string or missing ?id previously slipped through and caused 500s.
+        # Explicit check ensures consistent 400 "invalid document id" instead of relying on int() exceptions.
         if document_id is None:
-            document_id = request.args.get("id") or request.args.get("documentid")
+            raw_id = request.args.get("id") or request.args.get("documentid")
+            if not raw_id:   # covers None and empty string
+                return jsonify({"error": "invalid document id"}), 400
             try:
-                document_id = int(document_id)
-            except (TypeError, ValueError):
-                return jsonify({"error": "document id required"}), 400
+                document_id = int(raw_id)
+            except ValueError:
+                return jsonify({"error": "invalid document id"}), 400
         
         try:
             with get_engine().connect() as conn:
@@ -539,10 +572,23 @@ def create_app():
         resp.headers["Cache-Control"] = "private, max-age=0, must-revalidate"
         return resp
     
+    
     # GET /api/get-version/<link>  → returns the watermarked PDF (inline)
     # Traversal should be prevented.
+    # Fuzz fix for empty links, extra route.
+    # Extra route at bottom
+    @app.get("/api/get-version/")
+    def get_version_empty():
+        return jsonify({"error": "invalid version link"}), 400
+
     @app.get("/api/get-version/<link>")
-    def get_version(link: str):       
+    def get_version(link: str):
+        if is_invalid_link(link):
+            return jsonify({"error": "invalid version link"}), 400
+        
+        decoded = unquote(link).strip()
+        decoded = re.sub(r"/+", "/", decoded).rstrip("/")
+
         try:
             with get_engine().connect() as conn:
                 row = conn.execute(
@@ -552,7 +598,7 @@ def create_app():
                         WHERE link = :link
                         LIMIT 1
                     """),
-                    {"link": link},
+                    {"link": decoded},
                 ).first()
         except Exception as e:
             return jsonify({"error": f"database error: {str(e)}"}), 503
@@ -565,10 +611,10 @@ def create_app():
 
         # Basic safety: ensure path is inside STORAGE_DIR and exists
         try:
-            file_path.resolve().relative_to(app.config["STORAGE_DIR"].resolve())
+            file_path = _safe_resolve_under_storage(row.path, app.config["STORAGE_DIR"])
         except Exception:
-            # Path looks suspicious or outside storage
             return jsonify({"error": "document path invalid"}), 500
+
 
         if not file_path.exists():
             return jsonify({"error": "file missing on disk"}), 410
@@ -586,6 +632,10 @@ def create_app():
 
         resp.headers["Cache-Control"] = "private, max-age=0"
         return resp
+    
+    @app.get("/api/get-version/<path:bad_link>")
+    def get_version_bad_path(bad_link: str):
+        return jsonify({"error": "invalid version link"}), 400
     
     # Helper: resolve path safely under STORAGE_DIR (handles absolute/relative)
     def _safe_resolve_under_storage(p: str, storage_root: Path) -> Path:
@@ -701,8 +751,6 @@ def create_app():
             return jsonify({"error": "document id required"}), 400
             
         payload = request.get_json(silent=True) or {}
-      #  print(f"[DEBUG] Payload: {payload}")
-        # allow a couple of aliases for convenience
         method = payload.get("method")
         intended_for = payload.get("intended_for")
         position = payload.get("position") or None
@@ -715,10 +763,43 @@ def create_app():
         except (TypeError, ValueError):
             print("[ERROR] document_id (int) is required")
             return jsonify({"error": "document_id (int) is required"}), 400
-        if not method or not intended_for or not isinstance(secret, str) or not isinstance(key, str):
-            print(f"[ERROR] Validation failed: method={method}, intended_for={intended_for}, secret={secret}, key={key}")
-            return jsonify({"error": "method, intended_for, secret, and key are required"}), 400
 
+        # Required fields check
+        if not method or not intended_for:
+            print(f"[ERROR] Missing required fields: method={method}, intended_for={intended_for}")
+            return jsonify({"error": "method and intended_for are required"}), 400
+
+        # Token validation: only allow safe characters and length
+        ALLOWED_TOKEN_RE = re.compile(r"^[\w\-+=]+$")  # letters, numbers, underscore, dash, +, =
+
+        def validate_token_field(name: str, value: str, min_len=3, max_len=128):
+            if not isinstance(value, str) or not value.strip():
+                return False, f"{name} cannot be empty"
+            val = value.strip()
+            if not (min_len <= len(val) <= max_len):
+                return False, f"{name} length invalid"
+            if not ALLOWED_TOKEN_RE.fullmatch(val):
+                return False, f"{name} contains invalid characters"
+            return True, val
+
+        # Validate secret
+        ok, secret_val = validate_token_field("secret", secret)
+        if not ok:
+            return jsonify({"error": secret_val}), 400
+        secret = secret_val
+
+        # Validate key
+        ok, key_val = validate_token_field("key", key)
+        if not ok:
+            return jsonify({"error": key_val}), 400
+        key = key_val
+
+        # intended_for: only basic length and non-empty check, allow broader chars
+        if not isinstance(intended_for, str) or not intended_for.strip():
+            return jsonify({"error": "intended_for cannot be empty"}), 400
+        intended_for = intended_for.strip()
+        if len(intended_for) > 64:
+            return jsonify({"error": "intended_for too long"}), 400
         # lookup the document; enforce ownership
         try:
             with get_engine().connect() as conn:

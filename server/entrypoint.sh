@@ -29,7 +29,8 @@ fi
 # --- Replace placeholder in /flag ---
 if [[ -f "/flag" ]]; then
   if grep -q "REPLACE_THIS_STRING_WITH_SERVER_FLAG" "/flag"; then
-    echo "Replacing placeholder in flag with $FLAG_1"
+    #echo "Replacing placeholder in flag with $FLAG_1"
+    echo "Replacing placeholder in flag with FLAG_1"
     sed -i "s/REPLACE_THIS_STRING_WITH_SERVER_FLAG/${FLAG_1}/g" /flag
   fi
 else
@@ -44,7 +45,8 @@ fi
 # --- Replace placeholder in /app/flag ---
 if [[ -f "/app/flag" ]]; then
   if grep -q "REPLACE_THIS_STRING_WITH_SERVER_FLAG" "/app/flag"; then
-    echo "Replacing placeholder in flag with $FLAG_2"
+    #echo "Replacing placeholder in flag with $FLAG_2"
+    echo "Replacing placeholder in flag with FLAG_2"
     sed -i "s/REPLACE_THIS_STRING_WITH_SERVER_FLAG/${FLAG_2}/g" /app/flag
   fi
 else

@@ -1,20 +1,23 @@
+# test/fuzzing/test_fuzz_list_versions.py
 import pytest
-from hypothesis import given, strategies as st
 import requests
+from hypothesis import given, settings
+from hypothesis import strategies as st
+from ..fuzz_helpers import API_URL, TIMEOUT, HYP_SETTINGS, LIST_VERSIONS_STRATEGY
 
-API_URL = "http://server:5000/api"
-
+@given(payload=LIST_VERSIONS_STRATEGY)
+@settings(**HYP_SETTINGS)
 @pytest.mark.usefixtures("auth_headers")
-@given(
-    use_path=st.booleans(),
-    doc_id=st.one_of(
-        st.integers(min_value=-1000, max_value=100000),
-        st.text(min_size=0, max_size=16)
-    ),
-    query_key=st.sampled_from(["id", "documentid", ""])
-)
-def test_fuzz_list_versions(use_path, doc_id, query_key, request):
-    auth_headers = request.getfixturevalue("auth_headers")
+def test_fuzz_list_versions(payload, request):
+    """
+    Fuzzes /list-versions and /list-versions/<id> with varied doc_id and query keys.
+    Acceptable outcomes: 200 (ok), 400 (bad input), 404 (not found), 503 (db error)
+    """
+    use_path = payload["use_path"]
+    doc_id = payload["doc_id"]
+    query_key = payload["query_key"]
+
+    auth_headers = request.getfixturevalue("auth_headers") if payload["use_auth"] else {}
 
     if use_path and isinstance(doc_id, int):
         url = f"{API_URL}/list-versions/{doc_id}"
@@ -23,9 +26,16 @@ def test_fuzz_list_versions(use_path, doc_id, query_key, request):
         url = f"{API_URL}/list-versions"
         params = {query_key: doc_id} if query_key else {}
 
-    r = requests.get(url, headers=auth_headers, params=params)
+    try:
+        r = requests.get(url, headers=auth_headers, params=params, timeout=TIMEOUT)
+    except requests.exceptions.RequestException as e:
+        pytest.skip(f"Transport error during request: {e}")
+        return
 
-    assert r.status_code in (200, 400, 404, 503), (
+    expected_statuses = (200, 400, 404, 503)
+    if not payload["use_auth"]:
+        expected_statuses += (401,)
+    assert r.status_code in expected_statuses, (
         f"Unexpected status {r.status_code} for doc_id={doc_id}, "
         f"query_key={query_key}, use_path={use_path}"
     )

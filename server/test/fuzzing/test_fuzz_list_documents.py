@@ -1,31 +1,36 @@
+from hypothesis import given, settings
 import pytest
-from hypothesis import given, strategies as st
 import requests
+from ..fuzz_helpers import API_URL, TIMEOUT, HYP_SETTINGS, LIST_DOCUMENTS_STRATEGY, safe_get
 
-API_URL = "http://server:5000/api"
-
+@given(payload=LIST_DOCUMENTS_STRATEGY)
+@settings(**HYP_SETTINGS)
 @pytest.mark.usefixtures("auth_headers")
-@given(
-    token_prefix=st.sampled_from(["Bearer", "Token", ""]),
-    token_body=st.text(
-        min_size=0,
-        max_size=128,
-        alphabet=st.characters(
-            whitelist_categories=["Ll", "Lu", "Nd"],
-            whitelist_characters="-._~",
-            max_codepoint=127
-        )
+def test_fuzz_list_documents(payload, request):
+    """
+    Fuzzes the /api/list-documents endpoint with varying Authorization headers.
+    Tests both valid and malformed tokens depending on 'use_real'.
+    """
+    token_prefix = payload["token_prefix"]
+    token_body = payload["token_body"]
+    use_real = payload["use_real"]
+
+    auth_headers = request.getfixturevalue("auth_headers") if payload["use_auth"] else {}
+
+    if use_real:
+        headers = auth_headers
+    else:
+        token = f"{token_prefix} {token_body}".strip()
+        headers = {"Authorization": token} if token else {}
+
+    query_key = payload["query_key"]
+    doc_id = payload["doc_id"]
+    url = f"{API_URL}/list-documents"
+    if query_key and doc_id:
+        url += f"?{query_key}={doc_id}"
+
+    r = safe_get(url, headers=headers)
+
+    assert r.status_code in (200, 400, 401, 503), (
+        f"Unexpected status {r.status_code} for headers={headers}"
     )
-)
-def test_fuzz_list_documents(token_prefix, token_body, request):
-    auth_headers = request.getfixturevalue("auth_headers")
-
-    # Use the real token from the fixture to test valid path
-    valid_token = auth_headers["Authorization"].split(" ", 1)[1]
-
-    # Replace token_body with fuzzed value unless it's empty
-    token = f"{token_prefix} {token_body}".strip()
-    headers = {"Authorization": token} if token else {}
-
-    r = requests.get(f"{API_URL}/list-documents", headers=headers)
-    assert r.status_code in (200, 401, 503), f"Unexpected status {r.status_code} for token={token}"
