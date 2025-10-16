@@ -5,148 +5,196 @@
 fuzzer:
   tool: "Hypothesis (Python)"
   version: "6.67.0"
-  description: "Property-based fuzzer using strategies to cover edge cases for GET endpoints."
+  description: "Property-based fuzzer using strategies to cover edge cases for implemented endpoints."
 
 target:
   base_url: "http://server:5000/api"
-  endpoints:
-    - "/get-document"
-    - "/get-document/<id>"
-    - "/get-version/<link>"
+  endpoints: 
+    - "/create-user"
+    - "/login"
+    - "/upload-document"
+    - "/list-documents"
+    - "/list-versions"
+    - "/list-all-versions"
+    - "/get_document"
+    - "/get_version"
+    - "/create_watermark"
+    - "/load-plugin"
+    - "/read-watermark"
+    - "/rmap-initiate"
+    - "/rmap-get-link"
 
 auth:
   headers:
-    Authorization: "Bearer VALID_TEST_TOKEN"   # test account only
+    Authorization: "Bearer VALID_TEST_TOKEN"
 
-strategies:
-  upload_document:
-    filename:
-      type: text
-      min_size: 1
-      max_size: 64
-      sampled_tokens:
-        - "doc.pdf"
-        - "payload.pdf"
-        - "rmap.PdF"
-        - "evil.pdf.exe"
-    content:
-      type: binary
-      min_size: 0
-      max_size: 256
-    mime:
-      type: sampled_from
-      values: ["application/pdf", "application/zip", "text/plain", "image/png"]
-    form_name:
-      type: text
-      min_size: 0
-      max_size: 64
-    extension:
-      type: sampled_from
-      values: [".pdf", ".zip", ".pdf.exe", ".PdF", ".pdf%00.zip"]
-    magic_prefix:
-      type: sampled_from
-      values: ["%PDF", "PK\\x03\\x04", "\\x89PNG", ""]   # YAML strings, mapped later to bytes
-    traversal:
-      type: sampled_from
-      values: [true, false]
-  login_strategy:
-    email:
-      type: text
-      min_size: 0
-      max_size: 128
-      sampled_tokens:
-        - ""
-        - "user@example.com"
-        - "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    password:
-      type: text
-      min_size: 0
-      max_size: 128
-      sampled_tokens:
-        - ""
-        - "P@ssw0rd!"
-        - "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-  document_id_strategy:
-    sampled_tokens: [-1, 0, 1, 999999]
+# shared strategies here
+shared_components:
+  text_edge:
+    components:
+      - type: text
+        min_size: 0
+        max_size: 256
+      - type: sampled_from
+        values:
+          - ""
+          - "null"
+          - "undefined"
+          - "NaN"
+          - "' OR 1=1 --"
+          - "%00"
+          - "🔥💥🚀"
+          - "日本語"
+          - "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
+  int_edge:
     components:
       - type: integer
-  create_user:
-    email:
-      type: text
-      min_size: 0
-      max_size: 128
-    login:
-      type: text
-      min_size: 0
-      max_size: 64
-    password:
-      type: text
-      min_size: 0
-      max_size: 128
-  link_strategy:
-    description: "Endpoint path/query fuzzing strategy for /get-version/<link>"
-    sampled_tokens:
-      - "../etc/passwd"
-      - "../../secret.txt"
-      - "%2e%2e%2fetc%2fpasswd"
-      - "..\\..\\evil.pdf"
-      - ""
-      - " "
-      - ":"
-      - "%00"
-      - "%3A"
-      - "test..pdf"
-      - "validlink123"
-      - "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-      - "日本語.pdf"
+      - type: sampled_from
+        values: [-999999999, -1, 0, 1, 999999999]
 
+  bool_edge:
+    type: sampled_from
+    values: [true, false]
+
+  binary_edge:
+    type: binary
+    min_size: 0
+    max_size: 256
+
+  mime_edge:
+    type: sampled_from
+    values: ["application/pdf", "application/zip", "text/plain", "image/png", "application/x-msdownload"]
+
+  header_dict_edge:
     components:
-      - type: "text"
-        min_size: 0
-        max_size: 200
-      - type: "binary"
-        min_size: 0
-        max_size: 64
-        encoding: "hex/base64"
-      - type: "integer"
-        representation: "string"
-      - type: "percent_encoded_text"
-        source: "text"
-      - type: "sampled_from"
-        values: ["../etc/passwd", "%00", ":", "", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"]
+      - type: sampled_from
+        values:
+          - {}
+          - {"X-Debug": "true"}
+          - {"X-Fuzz": "abc"}
+          - {"X-Empty": ""}
+          - {"X-Long": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}
 
-parameters:
-  hypothesis:
-    max_examples: 200
-    deadline: null  # disables per-example timeout
-    derandomize: false
-  requests:
-    timeout_seconds: 6
+# endpoint-specific strategies here
+strategies:
+  create_user:
+    email: ${shared_components.text_edge}
+    login: ${shared_components.text_edge}
+    password: ${shared_components.text_edge}
 
-rate_and_parallelism:
-  max_rps_per_worker: 5
-  workers: 1
+  login:
+    email: ${shared_components.text_edge}
+    password: ${shared_components.text_edge}
 
-environment:
-  run_in: "docker compose exec server"
-  description: "Local Docker environment; test DB snapshot applied before each run."
+  upload_document:
+    filename: ${shared_components.text_edge}
+    content: ${shared_components.binary_edge}
+    mime: ${shared_components.mime_edge}
+    form_name: ${shared_components.text_edge}
+    extension: ${shared_components.text_edge}
+    magic_prefix: ${shared_components.text_edge}
+    traversal: ${shared_components.bool_edge}
+    use_auth: ${shared_components.bool_edge}
+    extra_headers: ${shared_components.header_dict_edge}
 
-safety:
-  allowed_operations:
-    - GET
-    - POST
-  forbidden_operations:
-    - PUT
-    - DELETE
-  run_against: "staging/local docker only"
-  notes: "Do not run against production; test token has minimal privileges."
+  list_documents:
+    token_prefix: ${shared_components.text_edge}
+    token_body: ${shared_components.text_edge}
+    use_real: ${shared_components.bool_edge}
+    use_auth: ${shared_components.bool_edge}
+    query_key: ${shared_components.text_edge}
+    doc_id: ${shared_components.int_edge}
 
-logging:
-  artifact_dir: "fuzz-results/"
-  save_response_bodies: true
-  save_minimal_examples: true
-  format: "JSON per failing case"
+  list_versions:
+    use_path: ${shared_components.bool_edge}
+    query_key: ${shared_components.text_edge}
+    doc_id: ${shared_components.int_edge}
+    use_auth: ${shared_components.bool_edge}
 
-reproducibility:
-  command: "docker compose exec server pytest test/fuzzing -q"
-  notes: "Use Hypothesis shrinking and -s option to capture failing inputs."
+  list_all_versions:
+    extra_headers: ${shared_components.header_dict_edge}
+    use_auth: ${shared_components.bool_edge}
+    query_key: ${shared_components.text_edge}
+    doc_id: ${shared_components.int_edge}
+
+  get_document:
+    use_path: ${shared_components.bool_edge}
+    doc_id: ${shared_components.int_edge}
+    query_id: ${shared_components.text_edge}
+    query_key: ${shared_components.text_edge}
+    use_auth: ${shared_components.bool_edge}
+    extra_headers: ${shared_components.header_dict_edge}
+
+  get_version:
+    link: ${shared_components.text_edge}
+    traversal: ${shared_components.bool_edge}
+    extra_headers: ${shared_components.header_dict_edge}
+
+  delete_document:
+    use_path: ${shared_components.bool_edge}
+    use_query: ${shared_components.bool_edge}
+    use_body: ${shared_components.bool_edge}
+    doc_id: ${shared_components.int_edge}
+    query_key: ${shared_components.text_edge}
+    use_auth: ${shared_components.bool_edge}
+    extra_headers: ${shared_components.header_dict_edge}
+
+  create_watermark:
+    location:
+      type: sampled_from
+      values: ["path", "query", "body", "none"]
+    doc_id: ${shared_components.int_edge}
+    query_key:
+      type: sampled_from
+      values: ["id", "documentid", "foo", ""]
+    method:
+      type: sampled_from
+      values: ["stamp", "overlay", "axel", "logo-watermark", "my-method-secure"]
+    intended_for: ${shared_components.text_edge}
+    position:
+      type: sampled_from
+      values: ["top-left", "bottom-right", "", "🔥"]
+    secret: ${shared_components.text_edge}
+    key: ${shared_components.text_edge}
+    use_auth: ${shared_components.bool_edge}
+    extra_headers: ${shared_components.header_dict_edge}
+
+  load_plugin:
+    filename: ${shared_components.text_edge}
+    file_bytes: ${shared_components.binary_edge}
+    overwrite: ${shared_components.bool_edge}
+    use_auth: ${shared_components.bool_edge}
+    extra_headers: ${shared_components.header_dict_edge}
+    extension:
+      type: sampled_from
+      values: [".pkl", ".dill", ".bin", ""]
+
+  read_watermark:
+    location:
+      type: sampled_from
+      values: ["path", "query", "body", "none"]
+    doc_id: ${shared_components.int_edge}
+    query_key:
+      type: sampled_from
+      values: ["id", "documentid", "foo", ""]
+    method:
+      type: sampled_from
+      values: ["stamp", "embed", "extract", "default-method"]
+    position:
+      type: sampled_from
+      values: ["top-left", "bottom-right", "", "center"]
+    key: ${shared_components.text_edge}
+    use_auth: ${shared_components.bool_edge}
+    extra_headers: ${shared_components.header_dict_edge}
+
+  rmap_initiate:
+    payload: ${shared_components.text_edge}
+    use_auth: ${shared_components.bool_edge}
+    extra_headers: ${shared_components.header_dict_edge}
+
+  rmap_get_link:
+    payload: ${shared_components.text_edge}
+    use_auth: ${shared_components.bool_edge}
+    extra_headers: ${shared_components.header_dict_edge}
+
