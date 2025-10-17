@@ -9,7 +9,7 @@ from watermarking_method import load_pdf_bytes
 from axel_watermark import AxelWatermark
 from fitz import open as fitz_open
 from flask import Flask
-from test_watermarking_all_methods import sample_pdf_path
+from test.test_watermarking_all_methods import sample_pdf_path
 
 #for mutants server.x_db_url__mutmut_10 & server.x_db_url__mutmut_9
 def test_db_url_uses_correct_db_name(monkeypatch):
