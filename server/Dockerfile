@@ -34,6 +34,8 @@ COPY test /app/test
 # Reinstall in editable mode (optional redundancy — can be removed if already done above)
 RUN pip install --no-cache-dir -e .
 
+RUN mkdir -p /app/logs
+
 EXPOSE 5000
 
 # Default command runs the web server
