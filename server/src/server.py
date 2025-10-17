@@ -58,7 +58,7 @@ def create_app():
     limiter = Limiter(
         get_remote_address,
         app=app,
-        default_limits=["1000000 per minute"]
+        default_limits=["10000 per minute"]
     )
     # Custom handler for rate limit exceeded
     @app.errorhandler(RateLimitExceeded)
@@ -775,8 +775,7 @@ def create_app():
     @app.post("/api/create-watermark/<int:document_id>")
     @require_auth
     def create_watermark(document_id: int | None = None):
-        # print(f"[DEBUG] /api/create-watermark called with document_id: {document_id}")
-        # accept id from path, query (?id= / ?documentid=), or JSON body on GET
+        # accept id from path, query (?id= / ?documentid=), or JSON body
         doc_id = (
             document_id
             or request.args.get("id")
@@ -788,7 +787,6 @@ def create_app():
         except (TypeError, ValueError):
             return jsonify({"error": "document_id (int) is required"}), 400
 
-            
         payload = request.get_json(silent=True) or {}
         method = payload.get("method")
         intended_for = payload.get("intended_for")
@@ -796,75 +794,61 @@ def create_app():
         secret = payload.get("secret")
         key = payload.get("key")
 
-        # validate input
-        try:
-            doc_id = int(doc_id)
-        except (TypeError, ValueError):
-            print("[ERROR] document_id (int) is required")
-            return jsonify({"error": "document_id (int) is required"}), 400
-
         # Required fields check
         if not method or not intended_for:
-            print(f"[ERROR] Missing required fields: method={method}, intended_for={intended_for}")
             return jsonify({"error": "method and intended_for are required"}), 400
 
-        # Token validation: only allow safe characters and length
-        ALLOWED_TOKEN_RE = re.compile(r"^[\w\-+=]+$")  # letters, numbers, underscore, dash, +, =
+        # Explicitly whitelist supported methods
+        ALLOWED_METHODS = {"axel", "logo-watermark", "my-method-secure"}
+        if method not in ALLOWED_METHODS:
+            return jsonify({"error": f"unsupported watermark method '{method}'"}), 400
+
+        # Token validation
+        ALLOWED_TOKEN_RE = re.compile(r"^[\w\-+=]+$")
 
         def validate_token_field(name: str, value: str, min_len=3, max_len=128):
             if not isinstance(value, str) or not value.strip():
                 return False, f"{name} cannot be empty"
             val = value.strip()
-            if val.lower() in {"null", "none"}:
-                return False, f"{name} cannot be 'null'"
+            if val.lower() in {"null", "none", "undefined"}:
+                return False, f"{name} cannot be '{val}'"
             if not (min_len <= len(val) <= max_len):
                 return False, f"{name} length invalid"
             if not ALLOWED_TOKEN_RE.fullmatch(val):
                 return False, f"{name} contains invalid characters"
             return True, val
 
-
-        # Validate secret
         ok, secret_val = validate_token_field("secret", secret)
         if not ok:
             return jsonify({"error": secret_val}), 400
         secret = secret_val
 
-        # Validate key
         ok, key_val = validate_token_field("key", key)
         if not ok:
             return jsonify({"error": key_val}), 400
         key = key_val
 
-        # intended_for: only basic length and non-empty check, allow broader chars
+        # intended_for basic validation
         if not isinstance(intended_for, str) or not intended_for.strip():
             return jsonify({"error": "intended_for cannot be empty"}), 400
         intended_for = intended_for.strip()
         if len(intended_for) > 64:
             return jsonify({"error": "intended_for too long"}), 400
-        # lookup the document; enforce ownership
+
+        # lookup the document
         try:
             with get_engine().connect() as conn:
-             #   print(f"[DEBUG] Looking up document id {doc_id}")
                 row = conn.execute(
-                    text("""
-                        SELECT id, name, path
-                        FROM Documents
-                        WHERE id = :id
-                        LIMIT 1
-                    """),
+                    text("SELECT id, name, path FROM Documents WHERE id = :id LIMIT 1"),
                     {"id": doc_id},
                 ).first()
         except Exception as e:
-            print(f"[ERROR] DB error during document lookup: {e}")
-            return jsonify({"error": f"database error: {str(e)}"}), 503
+            return jsonify({"error": f"database error: {e}"}), 503
 
         if not row:
-            print("[ERROR] Document not found")
             return jsonify({"error": "document not found"}), 404
 
         # resolve path safely under STORAGE_DIR
-        # I think this is what slows things down, but it's not a big deal I hope
         storage_root = Path(app.config["STORAGE_DIR"]).resolve()
         file_path = Path(row.path)
         if not file_path.is_absolute():
@@ -873,44 +857,37 @@ def create_app():
         try:
             file_path.relative_to(storage_root)
         except ValueError:
-            print("[ERROR] Document path invalid")
             return jsonify({"error": "document path invalid"}), 400
         if not file_path.exists():
-            print("[ERROR] File missing on disk")
             return jsonify({"error": "file missing on disk"}), 410
 
         # check watermark applicability
         try:
             applicable = WMUtils.is_watermarking_applicable(
-                method=method,
-                pdf=str(file_path),
-                position=position
+                method=method, pdf=str(file_path), position=position
             )
             if applicable is False:
-                print("[ERROR] Watermarking method not applicable")
                 return jsonify({"error": "watermarking method not applicable"}), 400
         except Exception as e:
-            print(f"[ERROR] Watermark applicability check failed: {e}")
             return jsonify({"error": f"watermark applicability check failed: {e}"}), 400
 
-        # apply watermark → bytes
+        # apply watermark
         try:
             wm_bytes: bytes = WMUtils.apply_watermark(
                 pdf=str(file_path),
                 secret=secret,
                 key=key,
                 method=method,
-                position=position
+                position=position,
             )
             if not isinstance(wm_bytes, (bytes, bytearray)) or len(wm_bytes) == 0:
-                print("[ERROR] Watermarking produced no output")
                 return jsonify({"error": "watermarking produced no output"}), 400
         except Exception as e:
-            print(f"[ERROR] Watermarking failed: {e}")
-            return jsonify({"error": f"watermarking failed: {e}"}), 500
+            # treat unexpected WMUtils errors as bad request, not 500
+            return jsonify({"error": f"invalid watermark request: {e}"}), 400
 
-        # build destination file name: "<original_name>__<intended_to>.pdf"
-        base_name = secure_filename(Path(row.name or file_path.name).stem) # sanitized base name
+        # build destination file name
+        base_name = secure_filename(Path(row.name or file_path.name).stem)
         intended_slug = secure_filename(intended_for)
         dest_dir = file_path.parent / "watermarks"
         dest_dir.mkdir(parents=True, exist_ok=True)
@@ -918,28 +895,24 @@ def create_app():
         candidate = f"{base_name}__{intended_slug}.pdf"
         dest_path = dest_dir / candidate
 
-        # write bytes
         try:
             with dest_path.open("wb") as f:
-             #   print(f"[DEBUG] Writing watermarked file to {dest_path}")
                 f.write(wm_bytes)
         except Exception as e:
             return jsonify({"error": f"failed to write watermarked file: {e}"}), 500
-            print(f"[ERROR] Failed to write watermarked file: {e}")
 
-        # link token = sha1(watermarked_file_name + uuid)
-        import uuid
+        # link token
+        import uuid, hashlib
         unique_str = f"{candidate}-{uuid.uuid4().hex}"
         link_token = hashlib.sha1(unique_str.encode("utf-8")).hexdigest()
 
         try:
             with get_engine().begin() as conn:
-             #   print(f"[DEBUG] Inserting version into DB for doc_id {doc_id}")
                 conn.execute(
-                    text("""
-                        INSERT INTO Versions (documentid, link, intended_for, secret, method, position, path)
-                        VALUES (:documentid, :link, :intended_for, :secret, :method, :position, :path)
-                    """),
+                    text(
+                        """INSERT INTO Versions (documentid, link, intended_for, secret, method, position, path)
+                        VALUES (:documentid, :link, :intended_for, :secret, :method, :position, :path)"""
+                    ),
                     {
                         "documentid": doc_id,
                         "link": link_token,
@@ -947,29 +920,32 @@ def create_app():
                         "secret": secret,
                         "method": method,
                         "position": position or "",
-                        "path": dest_path
-                    }
+                        "path": dest_path,
+                    },
                 )
                 vid = int(conn.execute(text("SELECT LAST_INSERT_ID()")).scalar())
         except Exception as e:
-            # best-effort cleanup if DB insert fails
             try:
                 dest_path.unlink(missing_ok=True)
             except Exception:
                 pass
             return jsonify({"error": f"database error during version insert: {e}"}), 503
-            print(f"[ERROR] DB error during version insert: {e}")
 
-        return jsonify({
-            "id": vid,
-            "documentid": doc_id,
-            "link": link_token,
-            "intended_for": intended_for,
-            "method": method,
-            "position": position,
-            "filename": candidate,
-            "size": len(wm_bytes),
-        }), 201
+        return (
+            jsonify(
+                {
+                    "id": vid,
+                    "documentid": doc_id,
+                    "link": link_token,
+                    "intended_for": intended_for,
+                    "method": method,
+                    "position": position,
+                    "filename": candidate,
+                    "size": len(wm_bytes),
+                }
+            ),
+            201,
+        )
         
     # Added sanitaztion and safety checks to prevent directory traversal attacks    
     @app.post("/api/load-plugin")

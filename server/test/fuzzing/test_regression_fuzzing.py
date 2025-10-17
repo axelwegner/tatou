@@ -150,7 +150,7 @@ def test_create_watermark_wrong_docid(client, request):
     # Pick a doc_id that does not belong to the logged-in user
     wrong_id = uploaded_document["id"] + 999999
     payload = {
-        "method": "stamp",
+        "method": "axel",
         "intended_for": "someone@example.com",
         "position": "top-left",
         "secret": "s3cr3t",
@@ -174,7 +174,7 @@ def test_create_watermark_empty_key(uploaded_document, auth_headers):
     """
     url = f"{API_URL}/create-watermark/{uploaded_document['id']}"
     data = {
-        "method": "stamp",
+        "method": "axel",
         "intended_for": "0",
         "position": "top-left",
         "secret": "0",
@@ -196,7 +196,7 @@ def test_create_watermark_null_key_secret(uploaded_document, auth_headers):
     url = f"{API_URL}/create-watermark/{doc_id}"
     headers = auth_headers
     body = {
-        "method": "stamp",
+        "method": "axel",
         "intended_for": "0",
         "position": "top-left",
         "secret": "null",
