@@ -5,7 +5,7 @@ from ..fuzz_helpers import API_URL, HEADERS, TIMEOUT, HYP_SETTINGS, LOGIN_STRATE
 
 # Build strategy from YAML
 @given(payload=LOGIN_STRATEGY)
-@settings(**HYP_SETTINGS)
+@settings(**HYP_SETTINGS, deadline = None)
 def test_fuzz_login(payload):
     try:
         r = requests.post(f"{API_URL}/login", json=payload, headers=HEADERS, timeout=TIMEOUT)

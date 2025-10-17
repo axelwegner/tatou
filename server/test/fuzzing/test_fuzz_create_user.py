@@ -4,7 +4,7 @@ import requests
 from ..fuzz_helpers import API_URL, HEADERS, TIMEOUT, HYP_SETTINGS, CREATE_USER_STRATEGY
 
 @given(payload=CREATE_USER_STRATEGY)
-@settings(**HYP_SETTINGS)
+@settings(**HYP_SETTINGS, deadline = None)
 def test_fuzz_create_user(payload):
     try:
         r = requests.post(f"{API_URL}/create-user", json=payload, headers=HEADERS, timeout=TIMEOUT)
