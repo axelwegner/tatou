@@ -1,3 +1,5 @@
+""" This was used for a previous rate limiter just to test it. But it seems like a silly thing to test when the rate limiter is set to high numbers. It was cool to see it confirm that the rate limiter was 30 but I don't want to sit and spam the server 50000 times every test cycle for no reason. """
+
 # # Test for global DDoS protection by simulating multiple requests to the upload endpoint
 
 # import pytest

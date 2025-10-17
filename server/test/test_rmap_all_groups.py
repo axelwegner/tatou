@@ -1,3 +1,5 @@
+""" LEGACY TEST FOR RMAP. This was used earlier to test the rmap functionality while deployed in place of a client. It might still work but it is not needed since Nicolas added his new client."""
+
 # import os
 # import requests
 # import base64
