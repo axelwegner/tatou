@@ -12,7 +12,7 @@ services:
       - ./storage:/storage:ro
       - ./storage/rmap_pdfs:/app/storage/rmap_pdfs
       - ./server/fuzz-config.yaml:/app/fuzz-config.yaml:ro
-
+      - ./server/src/security.log:/app/security.log:ro
       - ./server/pki:/app/pki
       - ${HOST_SERVER_KEYS}:${SERVER_KEYS_DIR}
     env_file:
