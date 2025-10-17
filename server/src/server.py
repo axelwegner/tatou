@@ -775,20 +775,19 @@ def create_app():
     @app.post("/api/create-watermark/<int:document_id>")
     @require_auth
     def create_watermark(document_id: int | None = None):
-       # print(f"[DEBUG] /api/create-watermark called with document_id: {document_id}")
+        # print(f"[DEBUG] /api/create-watermark called with document_id: {document_id}")
         # accept id from path, query (?id= / ?documentid=), or JSON body on GET
-        if not document_id:
-            document_id = (
-                request.args.get("id")
-                or request.args.get("documentid")
-                or (request.is_json and (request.get_json(silent=True) or {}).get("id"))
-            )
-      #  print(f"[DEBUG] Resolved doc_id: {document_id}")
+        doc_id = (
+            document_id
+            or request.args.get("id")
+            or request.args.get("documentid")
+            or (request.is_json and (request.get_json(silent=True) or {}).get("id"))
+        )
         try:
-            doc_id = document_id
+            doc_id = int(doc_id)
         except (TypeError, ValueError):
-            print("[ERROR] Invalid document id")
-            return jsonify({"error": "document id required"}), 400
+            return jsonify({"error": "document_id (int) is required"}), 400
+
             
         payload = request.get_json(silent=True) or {}
         method = payload.get("method")
@@ -816,11 +815,14 @@ def create_app():
             if not isinstance(value, str) or not value.strip():
                 return False, f"{name} cannot be empty"
             val = value.strip()
+            if val.lower() in {"null", "none"}:
+                return False, f"{name} cannot be 'null'"
             if not (min_len <= len(val) <= max_len):
                 return False, f"{name} length invalid"
             if not ALLOWED_TOKEN_RE.fullmatch(val):
                 return False, f"{name} contains invalid characters"
             return True, val
+
 
         # Validate secret
         ok, secret_val = validate_token_field("secret", secret)
@@ -872,7 +874,7 @@ def create_app():
             file_path.relative_to(storage_root)
         except ValueError:
             print("[ERROR] Document path invalid")
-            return jsonify({"error": "document path invalid"}), 500
+            return jsonify({"error": "document path invalid"}), 400
         if not file_path.exists():
             print("[ERROR] File missing on disk")
             return jsonify({"error": "file missing on disk"}), 410
@@ -902,7 +904,7 @@ def create_app():
             )
             if not isinstance(wm_bytes, (bytes, bytearray)) or len(wm_bytes) == 0:
                 print("[ERROR] Watermarking produced no output")
-                return jsonify({"error": "watermarking produced no output"}), 500
+                return jsonify({"error": "watermarking produced no output"}), 400
         except Exception as e:
             print(f"[ERROR] Watermarking failed: {e}")
             return jsonify({"error": f"watermarking failed: {e}"}), 500

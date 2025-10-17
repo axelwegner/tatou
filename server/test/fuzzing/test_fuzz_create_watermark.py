@@ -6,6 +6,7 @@ from ..fuzz_helpers import (
     CREATE_WATERMARK_STRATEGY,
     safe_request,
 )
+
 @given(payload=CREATE_WATERMARK_STRATEGY)
 @settings(**HYP_SETTINGS)
 def test_fuzz_create_watermark(payload, uploaded_document, auth_headers):
@@ -46,6 +47,13 @@ def test_fuzz_create_watermark(payload, uploaded_document, auth_headers):
 
     r = safe_request(method, url, headers=headers, json=body)
 
+    # Helper: stricter validity check
+    def is_valid_field(val: str) -> bool:
+        return (
+            isinstance(val, str)
+            and val.strip()
+            and val.lower() not in {"null", "none"}
+        )
 
     # Work out expected statuses
     if not payload["use_auth"]:
@@ -56,10 +64,10 @@ def test_fuzz_create_watermark(payload, uploaded_document, auth_headers):
         except (TypeError, ValueError):
             expected = {400}
         else:
-            # Happy path: known doc_id + all required fields non-empty strings
+            # Happy path: known doc_id + all required fields semantically valid
             if (
                 doc_id == KNOWN_DOC_ID
-                and all(isinstance(body[f], str) and body[f] for f in ("method", "intended_for", "secret", "key"))
+                and all(is_valid_field(body[f]) for f in ("method", "intended_for", "secret", "key"))
             ):
                 expected = {201}
             else:
