@@ -88,7 +88,7 @@
 - **Expected**: `400 Bad Request` with message like "invalid key or secret value"
 - **Root Cause**: Placeholder strings passed basic type checks but failed deeper in watermark logic
 - **Regression Test**: `test_create_watermark_null_key_secret`
-- **Status**: Fixed by enforcing character and length checks inside create_watermark (Verified on 2025-10-16).
+- **Status**: Fixed by enforcing character and length checks inside create_watermark (Verified on 2025-10-17).
 
 ## API: /load_plugin
 - **Status**: No bugs discovered with fuzzing! (Verified on 2025-10-16)
