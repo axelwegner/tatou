@@ -38,39 +38,59 @@ from watermarking_method import WatermarkingMethod
 #from watermarking_utils import METHODS, apply_watermark, read_watermark, explore_pdf, is_watermarking_applicable, get_method
 
 def create_app():
+   # --- Login attempt tracking ---
+    failed_login_attempts = {}
+    MAX_FAILED_LOGIN = 3
 
     app = Flask(__name__)
 
-    # Logging and rate limiter to prevent DDOS. Less strict than before but enough to notify when something fishy is going on.
+    # --- Security logging setup ---
+    security_log = logging.FileHandler("logs/security.log")
+    security_log.setLevel(logging.WARNING)
+    formatter = logging.Formatter("[%(asctime)s] %(levelname)s %(message)s", "%Y-%m-%d %H:%M:%S")
+    security_log.setFormatter(formatter)
+    app.logger.addHandler(security_log)
+
 
     logging.basicConfig(level=logging.INFO)
     app.logger.setLevel(logging.INFO)
 
-    # limiter = Limiter(
-    #     get_remote_address,
-    #     app=app,
-    #     default_limits=["150 per minute"]
-    # )
-    # # Custom handler for rate limit exceeded
-    # @app.errorhandler(RateLimitExceeded)
-    # def handle_rate_limit(e):
-    #     app.logger.warning(f"Rate limit exceeded: {e.description}")
-    #     return jsonify({"error": "Rate limit exceeded"}), 429
+    limiter = Limiter(
+        get_remote_address,
+        app=app,
+        default_limits=["1000000 per minute"]
+    )
+    # Custom handler for rate limit exceeded
+    @app.errorhandler(RateLimitExceeded)
+    def handle_rate_limit(e):
+        app.logger.warning(f"Rate limit exceeded: {e.description}")
+        return jsonify({"error": "Rate limit exceeded"}), 429
 
 
-    # Global error handlers
+    # Register global error handler at the end of app setup
+    def handle_exception(e):
+        print("[ERROR] Unhandled Exception:")
+        traceback.print_exc()
+        return jsonify({"error": str(e), "type": type(e).__name__}), 500
+    app.errorhandler(Exception)(handle_exception)
+
+        # Global error handlers
     @app.errorhandler(405)
     def method_not_allowed(e):
         return jsonify({"error": "Method not allowed"}), 405
 
     @app.errorhandler(Exception)
+    # Register global error handler at the end of app setup
     def handle_exception(e):
         # Let HTTPExceptions (like 404, 401) pass through with their own codes
         from werkzeug.exceptions import HTTPException
         if isinstance(e, HTTPException):
             return e
+        print("[ERROR] Unhandled Exception:")
+        traceback.print_exc()
         return jsonify({"error": str(e), "type": type(e).__name__}), 500
 
+    app.errorhandler(Exception)(handle_exception)
 
 
     # app.debug = True
@@ -211,6 +231,7 @@ def create_app():
                     {"id": uid},
                 ).one()
         except IntegrityError:
+            app.logger.warning(f"[SECURITY] Duplicate account creation attempt: {email} from {request.remote_addr}")
             return jsonify({"error": "email or login already exists"}), 409
         except Exception as e:
             return jsonify({"error": f"database error: {str(e)}"}), 503
@@ -232,6 +253,14 @@ def create_app():
         password = payload.get("password") or ""
         if not email or not password:
             return jsonify({"error": "email and password are required"}), 400
+        
+         # Check for maximum failed login attempts
+        if failed_login_attempts.get(email, 0) >= MAX_FAILED_LOGIN:
+            app.logger.warning(
+                f"[SECURITY] Account locked after too many failed login attempts: {email} from {request.remote_addr}"
+            )
+            return jsonify({"error": "maximum failed login attempts reached"}), 429
+
 
         try:
             with get_engine().connect() as conn:
@@ -243,11 +272,16 @@ def create_app():
             return jsonify({"error": f"database error: {str(e)}"}), 503
 
         if not row or not check_password_hash(row.hpassword, password):
+            app.logger.warning(
+                f"[SECURITY] Failed login attempt for email={email} from {request.remote_addr}"
+            )
+            failed_login_attempts[email] = failed_login_attempts.get(email, 0) + 1
             return jsonify({"error": "invalid credentials"}), 401
 
+        # Reset failed attempts after successful login
+        failed_login_attempts[email] = 0
         token = _serializer().dumps({"uid": int(row.id), "login": row.login, "email": row.email})
         return jsonify({"token": token, "token_type": "bearer", "expires_in": app.config["TOKEN_TTL_SECONDS"]}), 200
-
     # POST /api/upload-document  (multipart/form-data)
     # Preventing directory traversal attacks
     @app.post("/api/upload-document")
@@ -259,7 +293,7 @@ def create_app():
         file = request.files["file"]
         app.logger.info(f"Upload received: filename={file.filename}, content_type={file.content_type}")
         file.seek(0)
-        header = file.read(8)
+        header = file.read(4)
         file.seek(0)
         app.logger.info(f"File header: {header}")
 
@@ -269,12 +303,13 @@ def create_app():
         # Sanitize filename
         fname = secure_filename(file.filename)
         if not fname.lower().endswith(".pdf"):
-            app.logger.warning("Extension check failed")
+            app.logger.warning("[SECURITY] Invalid file extension attempt detected")
             return jsonify({"error": "only .pdf files are allowed"}), 400
         # Check MIME type
         mime_type, _ = mimetypes.guess_type(fname)
         if mime_type != "application/pdf":
             app.logger.warning("Content type check failed")
+            app.logger.warning("[SECURITY] Invalid MIME type upload attempt detected")
             return jsonify({"error": "invalid MIME type, that's not a pdf"}), 400
         # Check magic number
         file.seek(0)
@@ -282,6 +317,7 @@ def create_app():
         file.seek(0)
         if header != b"%PDF":
             app.logger.warning("Magic number check failed")
+            app.logger.warning("[SECURITY] Invalid PDF header detected — possible exploit upload")
             return jsonify({"error": "file does not appear to be a valid PDF"}), 400
 
         user_dir = app.config["STORAGE_DIR"] / "files" / g.user["login"]
@@ -686,7 +722,11 @@ def create_app():
             return jsonify({"error": f"database error: {str(e)}"}), 503
 
         if not row:
-            # Don’t reveal others’ docs—just say not found
+            # Possible unauthorized delete attempt (either not found or not owner)
+            app.logger.warning(
+                f"[SECURITY] Unauthorized delete attempt by user {g.user['id']} "
+                f"on document id={doc_id} from {request.remote_addr}"
+            )
             return jsonify({"error": "document not found"}), 404
 
         # Resolve and delete file (best effort)
@@ -955,6 +995,7 @@ def create_app():
             return jsonify({"error": f"plugin path error: {e}"}), 500
 
         if not plugin_path.exists():
+            app.logger.warning(f"[SECURITY] Plugin load attempt for missing file: {filename} by user {g.user['id']}")
             return jsonify({"error": f"plugin file not found: {filename}"}), 404
 
         # Unpickle the object (dill if available; else std pickle)
@@ -971,7 +1012,7 @@ def create_app():
             cls = obj.__class__
 
         # Determine method name for registry
-        method_name = getattr(cls, "name", getattr(cls, "__name__", None))
+        method_name = getattr(cls, "name", getattr(cls, "_name_", None))
         if not method_name or not isinstance(method_name, str):
             return jsonify({"error": "plugin class must define a readable name (class.__name__ or .name)"}), 400
 
@@ -991,7 +1032,7 @@ def create_app():
             "loaded": True,
             "filename": filename,
             "registered_as": method_name,
-            "class_qualname": f"{getattr(cls, '__module__', '?')}.{getattr(cls, '__qualname__', cls.__name__)}",
+            "class_qualname": f"{getattr(cls, '_module_', '?')}.{getattr(cls, '_qualname_', cls.__name__)}",
             "methods_count": len(WMUtils.METHODS)
         }), 201
         
@@ -1261,4 +1302,3 @@ def db_url() -> str:
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-

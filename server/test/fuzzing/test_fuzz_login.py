@@ -13,4 +13,4 @@ def test_fuzz_login(payload):
         pytest.skip(f"Request error: {e}")
 
     # Acceptable outcomes
-    assert r.status_code in (200, 400, 401, 503), f"Unexpected status {r.status_code} for input: {payload}"
+    assert r.status_code in (200, 400, 429, 401, 503), f"Unexpected status {r.status_code} for input: {payload}"
