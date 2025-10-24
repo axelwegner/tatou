@@ -1,46 +1,72 @@
 import requests
 import pytest
+import io
+import uuid
+from reportlab.pdfgen import canvas
 
 API_URL = "http://server:5000/api"
 
-def test_delete_document_owner(auth_headers, uploaded_document):
-    """
-    Testar att dokumentägaren kan ta bort sitt dokument.
-    """
-    doc_id = uploaded_document["id"]
+def make_pdf_bytes():
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf)
+    c.drawString(100, 750, "This is a test PDF.")
+    c.showPage()
+    c.save()
+    buf.seek(0)
+    return buf
 
-    # DELETE via path parameter
-    url_path = f"{API_URL}/delete-document/{doc_id}"
-    r_path = requests.delete(url_path, headers=auth_headers)
+def create_user_and_login(client, prefix="user"):
+    unique = uuid.uuid4().hex[:8]
+    user = {
+        "login": f"{prefix}_{unique}",
+        "password": "testpass123",
+        "email": f"{prefix}_{unique}@example.com"
+    }
+    r = client.post("/api/create-user", json=user)
+    assert r.status_code in (200, 201)
+    r = client.post("/api/login", json={"email": user["email"], "password": user["password"]})
+    assert r.status_code == 200
+    token = r.get_json().get("token")
+    return user, token
+
+def upload_document_with_token(client, token):
+    buf = make_pdf_bytes()
+    data = {"file": (buf, "test.pdf"), "name": "test.pdf"}
+    headers = {"Authorization": f"Bearer {token}"}
+    resp = client.post("/api/upload-document", data=data, headers=headers, content_type="multipart/form-data")
+    assert resp.status_code == 201
+    doc = resp.get_json()
+    try:
+        buf.close()
+    except Exception:
+        pass
+    return doc
+
+def test_delete_document_owner(client):
+    owner, owner_token = create_user_and_login(client, "owner")
+    uploaded = upload_document_with_token(client, owner_token)
+    doc_id = uploaded["id"]
+
+    headers = {"Authorization": f"Bearer {owner_token}"}
+    r_path = client.delete(f"/api/delete-document/{doc_id}", headers=headers)
     assert r_path.status_code == 200
-    resp_json = r_path.json()
-    assert resp_json["deleted"] is True
-    assert str(resp_json["id"]) == str(doc_id)
-    # or
-    # assert int(resp_json["id"]) == int(doc_id)
+    resp_json = r_path.get_json()
+    assert resp_json.get("deleted") is True
+    assert str(resp_json.get("id")) == str(doc_id)
 
-    # Kontrollera att dokumentet inte längre finns för ägaren
-    url_check = f"{API_URL}/get-document/{doc_id}"
-    r_check = requests.get(url_check, headers=auth_headers)
+    r_check = client.get(f"/api/get-document/{doc_id}", headers=headers)
     assert r_check.status_code == 404
 
+def test_delete_document_other_user_forbidden(client):
+    # owner uploads
+    owner, owner_token = create_user_and_login(client, "owner")
+    uploaded = upload_document_with_token(client, owner_token)
+    doc_id = uploaded["id"]
 
-def test_delete_document_other_user_forbidden(auth_headers, uploaded_document, user2):
-    """
-    Testar att en annan användare inte kan ta bort dokument som tillhör någon annan.
-    """
-    doc_id = uploaded_document["id"]
+    # other user
+    other, other_token = create_user_and_login(client, "other")
+    other_headers = {"Authorization": f"Bearer {other_token}"}
 
-    # Logga in som annan användare
-    login_payload = {"email": user2["email"], "password": user2["password"]}
-    login_resp = requests.post(f"{API_URL}/login", json=login_payload)
-    assert login_resp.status_code == 200
-    token = login_resp.json()["token"]
-    other_headers = {"Authorization": f"Bearer {token}"}
-
-    # Försök DELETE
-    url = f"{API_URL}/delete-document/{doc_id}"
-    r = requests.delete(url, headers=other_headers)
-
-    # Eftersom dokumentet tillhör någon annan ska det inte gå
+    # other user attempts to delete owner's document
+    r = client.delete(f"/api/delete-document/{doc_id}", headers=other_headers)
     assert r.status_code in (401, 403, 404)

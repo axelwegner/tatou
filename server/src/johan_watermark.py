@@ -13,9 +13,7 @@ class LogoWatermark(WatermarkingMethod):
     def get_usage() -> str:
         return "Adds a watermark to each page in the pdf with a logo image."
 
-    # ------------------------
-    # Hjälpfunktioner
-    # ------------------------
+   
     @staticmethod
     def _derive_key_stream(key: str, length: int) -> bytes:
         out = b""
@@ -42,9 +40,7 @@ class LogoWatermark(WatermarkingMethod):
         plain = bytes(a ^ b for a, b in zip(enc, ks))
         return plain.decode("utf-8", errors="replace")
 
-    # ------------------------
-    # Implementerade metoder
-    # ------------------------
+    
     def add_watermark(self, pdf: PdfSource, secret: str | None, key: str, position: str | None = None) -> bytes:
         try:
             if not secret:
@@ -66,9 +62,9 @@ class LogoWatermark(WatermarkingMethod):
                 rect = fitz.Rect(r.width - 120, r.height - 120, r.width - 20, r.height - 20)
                 page.insert_image(rect, filename=str(logo_path), overlay=True)
 
-            # Store encrypted secret in metadata (use consistent key)
+            
             meta = dict(doc.metadata) if doc.metadata else {}
-            meta["subject"] = enc  # Always use lowercase 'subject'
+            meta["subject"] = enc  
             doc.set_metadata(meta)
 
             return doc.write()
@@ -79,7 +75,7 @@ class LogoWatermark(WatermarkingMethod):
         try:
             data = load_pdf_bytes(pdf)
             doc = fitz.open(stream=data, filetype="pdf")
-            # Always use lowercase 'subject' to match set_metadata
+            
             enc = doc.metadata.get("subject")
             if not enc:
                 raise SecretNotFoundError("Encrypted secret not found in PDF metadata.")
@@ -96,7 +92,7 @@ class LogoWatermark(WatermarkingMethod):
         except Exception:
             return False
 
-# Add this to your fixture if you have PyMuPDF installed
+
 @pytest.fixture(scope="session")
 def sample_pdf_path(tmp_path_factory) -> Path:
     pdf_path = tmp_path_factory.mktemp("pdfs") / "sample.pdf"

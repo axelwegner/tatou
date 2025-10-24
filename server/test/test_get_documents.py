@@ -1,63 +1,46 @@
 import requests
 import pytest
+import uuid
 
 API_URL = "http://server:5000/api"
 
-def test_get_document_owner_access(auth_headers, uploaded_document):
-    """
-    Verifierar att dokumentet är åtkomligt för ägaren via både query- och path-param.
-    Sparar filen för manuell kontroll.
-    """
+def test_get_document_owner_access(auth_client, uploaded_document):
+ 
+    #Verifies owner can access document via both query and path params.
     doc_id = uploaded_document["id"]
 
-    # GET med query parameter
-    url_query = f"{API_URL}/get-document?id={doc_id}"
-    r_query = requests.get(url_query, headers=auth_headers)
+    r_query = auth_client.get(f"/api/get-document?id={doc_id}")
     assert r_query.status_code == 200
-    assert r_query.headers["Content-Type"] == "application/pdf"
-    assert len(r_query.content) > 0
+    assert r_query.headers.get("Content-Type", "").startswith("application/pdf")
+    assert len(r_query.data) > 0
 
-    # GET med path parameter
-    url_path = f"{API_URL}/get-document/{doc_id}"
-    r_path = requests.get(url_path, headers=auth_headers)
+    r_path = auth_client.get(f"/api/get-document/{doc_id}")
     assert r_path.status_code == 200
-    assert r_path.headers["Content-Type"] == "application/pdf"
-    assert len(r_path.content) > 0
-
-    # Spara filen lokalt för visuell kontroll
-    with open("downloaded_test_owner.pdf", "wb") as f:
-        f.write(r_path.content)
+    assert r_path.headers.get("Content-Type", "").startswith("application/pdf")
+    assert len(r_path.data) > 0
 
 
-def test_get_document_other_user_restricted(auth_headers, uploaded_document, user2):
-    """
-    Verifierar att dokument utan watermark inte är åtkomliga för andra användare.
-    """
+def test_get_document_other_user_restricted(client, uploaded_document):
+
+    # Verifies that other users cannot access the owner's document.
     doc_id = uploaded_document["id"]
 
-    # Logga in som annan användare
-    login_payload = {"email": user2["email"], "password": user2["password"]}
-    login_resp = requests.post(f"{API_URL}/login", json=login_payload)
-    assert login_resp.status_code == 200
-    token = login_resp.json()["token"]
-    other_headers = {"Authorization": f"Bearer {token}"}
+    unique = uuid.uuid4().hex[:8]
+    other = {"login": f"other_{unique}", "password": "otherpass123", "email": f"other_{unique}@example.com"}
+    r_create = client.post("/api/create-user", json=other)
+    assert r_create.status_code in (200, 201)
+    r_login = client.post("/api/login", json={"email": other["email"], "password": other["password"]})
+    assert r_login.status_code == 200
+    other_token = r_login.get_json().get("token")
+    other_headers = {"Authorization": f"Bearer {other_token}"}
 
-    # Försök hämta dokumentet med annan användare
-    url = f"{API_URL}/get-document/{doc_id}"
-    r = requests.get(url, headers=other_headers)
-
-    # Dokument utan watermark ska inte vara åtkomliga för andra
+    r = client.get(f"/api/get-document/{doc_id}", headers=other_headers)
     assert r.status_code in (401, 403, 404)
 
 
-def test_get_document_watermark_owner(auth_headers, uploaded_document):
-    """
-    Valfritt: kontroll av watermark, kan utökas beroende på API-logik.
-    Här kontrollerar vi åtkomst för ägaren.
-    """
+def test_get_document_watermark_owner(auth_client, uploaded_document):
     doc_id = uploaded_document["id"]
-    url = f"{API_URL}/get-document/{doc_id}"
-    r = requests.get(url, headers=auth_headers)
+    r = auth_client.get(f"/api/get-document/{doc_id}")
     assert r.status_code == 200
-    assert r.headers["Content-Type"] == "application/pdf"
-    assert len(r.content) > 0
+    assert r.headers.get("Content-Type", "").startswith("application/pdf")
+    assert len(r.data) > 0

@@ -1,14 +1,33 @@
-import requests
+import io
 import uuid
+from reportlab.pdfgen import canvas
 
+def test_list_documents(auth_client):
+    # Create and upload a PDF via the test client
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf)
+    c.drawString(100, 750, "This is a test PDF.")
+    c.showPage()
+    c.save()
+    buf.seek(0)
 
-def test_list_documents(auth_headers, uploaded_document):
-    doc_id = uploaded_document["id"]
+    data = {
+        "file": (buf, "test.pdf"),
+        "name": "test.pdf"
+    }
+    resp = auth_client.post(
+        "/api/upload-document",
+        data=data,
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 201
+    uploaded = resp.get_json()
+    doc_id = uploaded["id"]
 
     # Owner can see their document metadata
-    r = requests.get(f"http://localhost:5000/api/list-documents", headers=auth_headers)
+    r = auth_client.get("/api/list-documents")
     assert r.status_code == 200
-    docs = r.json()["documents"]
+    docs = r.get_json()["documents"]
 
     assert any(d["id"] == doc_id for d in docs)
     found = next(d for d in docs if d["id"] == doc_id)
@@ -24,18 +43,20 @@ def test_list_documents(auth_headers, uploaded_document):
         "password": "otherpass123",
         "email": f"otheruser_{unique}@example.com"
     }
-    r_create = requests.post("http://localhost:5000/api/create-user", json=other_user)
+    # create other user
+    r_create = auth_client.post("/api/create-user", json=other_user)
     assert r_create.status_code == 201
-    r_login = requests.post("http://localhost:5000/api/login", json={
+    
+    r_login = auth_client.post("/api/login", json={
         "email": other_user["email"],
         "password": other_user["password"]
     })
     assert r_login.status_code == 200
-    other_token = r_login.json()["token"]
+    other_token = r_login.get_json()["token"]
     other_headers = {"Authorization": f"Bearer {other_token}"}
 
     # Other user should not see the document in their list
-    r_other = requests.get(f"http://localhost:5000/api/list-documents", headers=other_headers)
+    r_other = auth_client.get("/api/list-documents", headers=other_headers)
     assert r_other.status_code == 200
-    other_docs = r_other.json()["documents"]
+    other_docs = r_other.get_json()["documents"]
     assert all(d["id"] != doc_id for d in other_docs), "Metadata leak: other user can see document info"
