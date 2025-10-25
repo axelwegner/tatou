@@ -405,6 +405,8 @@ def create_app():
         return jsonify({"documents": docs}), 200
 
 
+    # Very unsatisfied, impossible to test somehow. Bad coverage, doesn't really work as intended. But I have tried so hard.
+
     # GET /api/list-versions
     # No risk of directory traversal here
     # Fuzzing fix, separate route to catch bad IDs that would crash the int:document_id route
