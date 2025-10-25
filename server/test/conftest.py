@@ -5,6 +5,8 @@ import uuid
 from reportlab.pdfgen import canvas
 from server import app
 from sqlalchemy import text
+import tempfile
+from pathlib import Path
 
 API_URL = "http://server:5000/api"
 
@@ -169,3 +171,18 @@ def skip_if_group_unreachable(request):
         base_url = EXTERNAL_GROUPS[group_name]
         if not is_reachable(base_url):
             pytest.skip(f"Skipping {group_name}: {base_url} not reachable")
+
+@pytest.fixture
+def isolated_client():
+    """
+    Returns a Flask test client and a temporary STORAGE_DIR.
+    Use this for load-plugin tests to avoid interfering with real documents.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        storage_root = Path(tmpdir)
+        # Configure the Flask client
+        app.config["TESTING"] = True
+        client = app.test_client()
+        # Patch STORAGE_DIR for this client only
+        client.application.config["STORAGE_DIR"] = str(storage_root)
+        yield client, storage_root
